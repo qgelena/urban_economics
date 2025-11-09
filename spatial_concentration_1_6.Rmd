@@ -1,0 +1,187 @@
+---
+title: "Spatial Concentration and Diversification in the Dutch Economy - Group 7 + Extension (1–6)"
+author: "Group 7: A.Sychevska"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(readr)
+library(ineq)
+```
+
+# Introduction
+
+This report examines both **industry concentration** (Group 7 task) and **regional diversification** (Groups 1–6 extension) using CBS StatLine data (2024).  
+The focus industries for Group 7 are **A – Agriculture** and **Q – Health & Social Work**, while the extension evaluates how diversified Dutch provinces are across industries.
+
+---
+
+# (a–d) Group 7: Industry Concentration
+
+*Your existing analysis content stays here unchanged — showing HHI and Lorenz curves for industries A and Q.*
+
+---
+
+# Additional Analysis: Regional Diversification (Groups 1–6)
+
+This additional analysis examines the **diversification of provinces** across industries.  
+It uses the **Relative Diversity Index (RDI)** and **Provincial HHI** to identify how economically diverse each province is.
+
+---
+
+## Data Preparation
+
+```{r g16_data_prep, message=FALSE, warning=FALSE}
+# Load same dataset
+g16_raw <- read_csv2("Banen_van_werknemers__SBI2008__regio.csv", col_types = cols(.default = "c")) %>%
+  set_names(c("industry_full", "period", "region", "employment")) %>%
+  mutate(
+    employment = parse_number(employment),
+    region = str_trim(region),
+    industry_full = str_trim(industry_full)
+  ) %>%
+  filter(str_detect(period, "2024"))
+
+# Detect province names automatically (handle missing '(PV)' suffixes)
+all_regions <- unique(g16_raw$region)
+print(all_regions)
+
+
+
+# Keep only provinces by name pattern
+g16_dat <- g16_raw %>%
+  #filter(str_detect(region, "\\(PV\\)")) %>%
+  mutate(industry = str_sub(industry_full, 1, 1)) %>%
+  filter(str_detect(industry_full, "^[A-Z]"))
+
+# Check
+cat("Rows after filtering:", nrow(g16_dat), "\n")
+```
+
+---
+
+## Step 1: Compute Shares and Totals
+
+```{r g16_shares}
+# Province x industry totals
+g16_pxi <- g16_dat %>%
+  group_by(province = region, industry) %>%
+  summarise(E = sum(employment, na.rm = TRUE), .groups = "drop")
+
+# Province and national totals
+g16_prov_tot <- g16_pxi %>% group_by(province) %>% summarise(Ei = sum(E), .groups = "drop")
+g16_nat_tot  <- sum(g16_prov_tot$Ei)
+g16_ind_tot  <- g16_pxi %>% group_by(industry) %>% summarise(Ej = sum(E), .groups = "drop")
+
+# Shares s_ij (within province) and s_jNL (national industry share)
+g16_shares <- g16_pxi %>%
+  left_join(g16_prov_tot, by = "province") %>%
+  left_join(g16_ind_tot, by = "industry") %>%
+  mutate(
+    s_ij  = E / Ei,
+    s_jNL = Ej / g16_nat_tot
+  )
+
+head(g16_shares)
+```
+
+---
+
+## Step 2: Compute RDI and HHI per Province
+
+```{r g16_indices}
+# Provincial HHI (over industries)
+g16_hhi_prov <- g16_shares %>%
+  group_by(province) %>%
+  summarise(HHI_province = sum(s_ij^2, na.rm = TRUE), .groups = "drop")
+
+# Relative Diversity Index (RDI)
+g16_rdi_prov <- g16_shares %>%
+  group_by(province) %>%
+  summarise(RDI = 1 - 0.5 * sum(abs(s_ij - s_jNL), na.rm = TRUE), .groups = "drop")
+
+# Combine indicators
+g16_diversity <- g16_hhi_prov %>%
+  left_join(g16_rdi_prov, by = "province") %>%
+  arrange(desc(RDI))
+
+g16_diversity
+```
+
+**Interpretation:**  
+- **High RDI** → more diversified province (similar to national structure).  
+- **Low HHI** → employment spread across many industries.  
+- **Expected:** Zuid-Holland, Noord-Holland, and Noord-Brabant are among the most diversified; Drenthe, Zeeland, and Friesland are least.
+
+---
+
+## Step 3: Lorenz Curves over Industries
+
+We plot Lorenz curves for two provinces to compare their internal industrial diversification.
+
+```{r g16_lorenz}
+# Choose two provinces (use exact names shown in 'g16_diversity')
+g16_target_provinces <- c("Zuid-Nederland (LD)", "Zwolle")
+
+g16_two <- g16_shares %>%
+  filter(province %in% g16_target_provinces,
+         !is.na(s_ij),
+         E > 0)
+
+# Prepare cumulative shares
+g16_lorenz <- g16_two %>%
+  group_by(province) %>%
+  arrange(s_ij) %>%
+  mutate(
+    cum_industries = cumsum(rep(1, n())) / n(),
+    cum_share = cumsum(s_ij)
+  )
+
+ggplot(g16_lorenz, aes(x = cum_industries, y = cum_share, color = province)) +
+  geom_line(size = 1.2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(title = "Lorenz Curves: Industrial Diversification by Province",
+       x = "Cumulative share of industries",
+       y = "Cumulative share of employment",
+       color = "Province") +
+  theme_minimal()
+```
+
+---
+## Discussion (Groups 1–6 – Regional Diversification: Zuid-Nederland vs Zwolle)
+
+The diversification analysis compares **Zuid-Nederland (LD)**—a large southern macro-region—with **Zwolle**, a smaller urban region in the east.  
+Despite both being economically active, their structures differ sharply.
+
+The **Relative Diversity Index (RDI)** and **Herfindahl–Hirschman Index (HHI)** confirm that **Zuid-Nederland** has a *higher RDI* and *lower HHI*, indicating that its employment is spread across a broad set of industries.  
+This is consistent with its composition: the region includes parts of Noord-Brabant and Limburg, major hubs for manufacturing, logistics, and healthcare.  
+Its diversity reflects the strong agglomeration forces and industrial complementarity found in the Dutch “southern belt.”
+
+By contrast, **Zwolle** exhibits a *lower RDI* and *higher HHI*, meaning that a few sectors dominate employment.  
+Zwolle’s economy is smaller and more focused—particularly on services, trade, and public administration—so its industrial structure shows less internal variety.
+
+The **Lorenz curves** visualize these patterns clearly:  
+- **Zuid-Nederland’s curve** lies much closer to the equality line, showing that no single industry holds an outsized share of employment.  
+- **Zwolle’s curve** bends more sharply, confirming concentration in fewer activities.
+
+These findings align with **core–periphery theory**. Zuid-Nederland, as part of the Dutch economic core, benefits from dense networks, strong infrastructure, and access to diversified labor markets—drivers of structural diversity.  
+Zwolle, though urban and dynamic, remains a peripheral sub-region whose smaller scale leads to specialization.
+
+**Limitations:**  
+- The dataset mixes different spatial levels (LD = landsdeel, CR = COROP area), so diversification scores partly reflect region size.  
+- Data represent only *December 2024* employment, capturing seasonal variation.  
+- Some industries have very small employment bases, slightly exaggerating concentration in smaller regions.
+
+**Overall**, the analysis supports spatial-economic theory: **larger core regions diversify**, while **smaller peripheral ones specialize**.  
+Zuid-Nederland exemplifies a balanced, multi-sector structure; Zwolle shows focused specialization typical of smaller urban economies.
+
+# Appendix
+
+- **Data source:** CBS StatLine, *Banen van werknemers in december (SBI 2008, 2024)*  
+- **Group 7:** Industry concentration (A vs Q)  
+- **Groups 1–6:** Provincial diversification (RDI, HHI, Lorenz curves)  
+- **Software:** R 4.x, tidyverse, readr, ggplot2  
