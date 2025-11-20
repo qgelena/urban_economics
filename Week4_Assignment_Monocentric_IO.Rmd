@@ -1,0 +1,523 @@
+---
+title: "Land use in the monocentric model. Input-output analysis - Group 7"
+author: 'Group 7: A. Sychevska,  Joshua Azadi Nik Ghaleh'
+output:
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+  html_document:
+    toc: true
+    toc_depth: 3
+    df_print: paged
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(readxl)
+library(ineq)
+
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(ggplot2)
+```
+
+# Assignment 1 — Land Use in the Monocentric Model
+
+We have three employment sectors in a monocentric city:
+
+- Services (S)  
+- Manufacturing (M)  
+- Agriculture (A)  
+
+Land is owned by landlords who rent it to the highest bidder.
+
+Agriculture has a flat bid–rent function:
+
+\[
+r_A(u) = 4
+\]
+
+for every distance \(u\) (in km) from the city centre.
+
+## 1a. A flat bid–rent function for agriculture implies two assumptions.
+
+First, all agricultural land is equally productive: yield per sq.m does not depend on how far the land is from the city, so farmers generate the same revenue everywhere. Second, it implicitly assumes that agricultural products have zero (or negligible) transport costs. If transporting crops were costly, profit would fall with distance and the bid–rent curve would slope downward. Because the bid–rent curve is constant, distance has no effect on agricultural profitability.
+
+## 1b. Bid–rent function for services
+
+Given for services (S):
+
+- Price per unit of output: \(p_S = 10\)  
+- Not land input costs: \(c_S = 1\) per unit  
+- Land requirement: 1 sq.m per unit of output  
+- Transport costs: 0.5 euro per km per unit  
+- Distance to centre: \(u\) km  
+
+With zero economic profit, residual earnings per unit available for land are:
+
+\[
+r_S(u) = p_S - c_S - t_S u 
+       = 10 - 1 - 0.5 u 
+       = 9 - 0.5u
+\]
+
+
+## 1c. Bid–rent function for manufacturing
+
+Given for manufacturing (M):
+
+- Price per unit of output: \(p_M = 14\)  
+- Not land input costs: \(c_M = 2\) per unit  
+- Land requirement: 1 sq.m per unit of output  
+- Transport costs: 2 euro per km per unit  
+
+So:
+
+\[
+r_M(u) = p_M - c_M - t_M u 
+       = 14 - 2 - 2u 
+       = 12 - 2u
+\]
+
+
+
+## 1d. Spatial equilibrium and locations of S, M, A
+
+Compare:
+
+- \(r_A(u) = 4\)  
+- \(r_S(u) = 9 - 0.5u\)  
+- \(r_M(u) = 12 - 2u\)  
+
+### Intersection points
+
+1. **Manufacturing vs Services**
+
+\(r_M(u) = r_S(u)\):
+
+\[
+12 - 2u = 9 - 0.5u \\
+3 = 1.5u \\
+u = 2
+\]
+
+It follows that:
+
+- For \(u < 2\): \(r_M(u) > r_S(u)\)
+
+- For \(u > 2\): \(r_S(u) > r_M(u)\)
+
+2. **Manufacturing vs Agriculture**
+
+\(r_M(u) = r_A(u) = 4\):
+
+\[
+12 - 2u = 4 \\
+2u = 8 \\
+u = 4
+\]
+
+3. **Services vs Agriculture**
+
+\(r_S(u) = r_A(u) = 4\):
+
+\[
+9 - 0.5u = 4 \\
+0.5u = 5 \\
+u = 10
+\]
+
+**Land-use pattern**
+
+- At \(u = 0\):  
+  - \(r_M(0) = 12\), \(r_S(0) = 9\), \(r_A(0) = 4\)  
+  → Manufacturing outbids all others at the city centre.
+
+From the intersection results:
+
+- **Manufacturing (M)**: from \(u = 0\) to \(u = 2\)  
+- **Services (S)**: from \(u = 2\) to \(u = 10\)  
+- **Agriculture (A)**: from \(u = 10\) outward
+
+
+```{r echo=FALSE, fig.height=7, fig.width=10}
+# bid-rent functions
+r_A <- function(u) 4 + 0*u        # agriculture
+r_S <- function(u) 9 - 0.5*u      # services
+r_M <- function(u) 12 - 2*u       # manufacturing
+
+# Distance range
+u_seq <- seq(0, 15, by = 0.1)
+
+# Plot agriculture
+plot(u_seq, r_A(u_seq), type = "l", lwd = 2,
+     xlab = "Distance u (km)", ylab = "Bid-rent",
+     ylim = c(0, 13), col = "forestgreen")
+
+# add services and manufacturing
+lines(u_seq, r_S(u_seq), lwd = 2, col = "dodgerblue")
+lines(u_seq, r_M(u_seq), lwd = 2, col = "darkorange")
+
+# convex line
+library(zoo)
+r_convex_raw <- pmax(r_A(u_seq), r_S(u_seq), r_M(u_seq))
+r_convex_smooth <- rollmean(r_convex_raw, k = 15, fill = NA)
+
+lines(u_seq, r_convex_smooth, lwd = 3, col = "black", lty = 2)
+
+# equilibrium boundaries
+abline(v = c(2, 10), lty = 2)
+
+# labels for sectors 
+text(1, 1, "M", cex = 1.4)
+text(6, 1, "S", cex = 1.4)
+text(12, 1, "A", cex = 1.4)
+
+# legend
+legend("topright",
+       legend = c("Agriculture (A)", "Services (S)", "Manufacturing (M)"),
+       col = c("forestgreen", "dodgerblue", "darkorange"),
+       lty = 1, lwd = 2, bty = "n")
+```
+
+
+## 1e. City size
+
+The urban area extends until the last point where any non-agricultural activity outbids agriculture.
+
+This happens where services are just indifferent to agriculture:
+
+\[
+r_S(u) = r_A(u) \\
+9 - 0.5u = 4 \\
+u = 10
+\]
+
+So the city size (distance from the centre to the edge of non-agricultural land use) is:
+
+\[
+u^* = 10 \text{ km}
+\]
+
+
+## 1f. New bid–rent function for services
+
+Now services have a more flexible production technology:
+
+\[
+r_S(u) = 6 \exp\left(\frac{1}{2} - \frac{u}{12}\right)
+\]
+
+Manufacturing and agriculture:
+
+- \(r_M(u) = 12 - 2u\)  
+- \(r_A(u) = 4\)
+
+New intersection points:
+
+```{r}
+rS_new <- function(u) 6 * exp(0.5 - u/12)
+rM     <- function(u) 12 - 2*u
+rA     <- function(u) 4
+
+uniroot(function(u) rM(u) - rS_new(u), interval = c(0, 4))
+uniroot(function(u) rS_new(u) - rA(u), interval = c(8, 14))
+```
+
+- **M–S intersection:** u ~ 1.71 km  
+- **S–A intersection:** u ~ 10.87 km  
+
+At the centre (\(u = 0\)):
+
+```{r}
+rS_new(0); rM(0); rA(0)
+```
+
+Manufacturing still has the highest bid–rent at \(u = 0\).
+
+### New spatial pattern
+
+- **Manufacturing (M):** from u = 0 to u ~ 1.71  
+- **Services (S):** from u ~ 1.71 to u ~ 10.87  
+- **Agriculture (A):** from u ~10.87 outward
+
+### Plot with new services bid–rent
+
+```{r echo=FALSE, fig.height=7, fig.width=10}
+# bid–rent functions
+rA      <- function(u) rep(4, length(u))
+rS_new  <- function(u) 6 * exp(0.5 - u/12)
+rM      <- function(u) 12 - 2*u
+
+# Distance range
+u_seq <- seq(0, 15, by = 0.1)
+
+# agriculture func
+plot(u_seq, rA(u_seq), type = "l", lwd = 2,
+     xlab = "Distance u (km)", ylab = "Bid-rent",
+     ylim = c(0, 13), col = "forestgreen")
+
+# add S_new and M
+lines(u_seq, rS_new(u_seq), lwd = 2, col = "dodgerblue")
+lines(u_seq, rM(u_seq), lwd = 2, col = "darkorange")
+
+# convex line
+library(zoo)
+r_convex_raw <- pmax(rA(u_seq), rS_new(u_seq), rM(u_seq))
+r_convex_smooth <- rollmean(r_convex_raw, k = 15, fill = NA)
+
+lines(u_seq, r_convex_smooth, lwd = 3, col = "black", lty = 2)
+
+# vertical boundaries
+abline(v = c(1.71, 10.87), lty = 2)
+
+# labels
+text(0.8,  1, "M", cex = 1.4)
+text(6,    1, "S", cex = 1.4)
+text(13,   1, "A", cex = 1.4)
+
+# legend
+legend("topright",
+       legend = c("Agriculture (A)", "Services (S, new)", "Manufacturing (M)", "Convex line"),
+       col    = c("forestgreen", "dodgerblue", "darkorange", "black"),
+       lty    = c(1,1,1,2),
+       lwd    = c(2,2,2,3),
+       bty    = "n")
+
+```
+
+
+## 1g. Distance ranges for services and manufacturing
+
+- Services (S):  
+  - Located between approximately u ~1.71 km and u ~ 10.87 km from the centre.
+
+- Manufacturing (M):  
+  - Located between u = 0 and u ~ 1.71 km.
+ 
+
+# Assignment 2 — Input–Output Analysis
+
+Economy with:
+
+- 2 sectors: Agriculture (A), Manufacturing (M)  
+- 2 regions: 1 and 2  
+
+4 sector–region combinations:
+
+1. A1  
+2. M1  
+3. A2  
+4. M2  
+
+There is no outside world (no imports/exports).  
+In each region and sector, total output is 100.
+
+The transactions table (rows = sellers, columns = buyers):
+
+```{r}
+T <- matrix(c(
+  40, 10,  5,  5,   # A1
+  20, 40, 10, 10,   # M1
+   5,  5, 40, 20,   # A2
+  10, 10, 20, 40    # M2
+), nrow = 4, byrow = TRUE)
+
+colnames(T) <- rownames(T) <- c("A1","M1","A2","M2")
+T
+```
+
+Outputs:
+
+```{r}
+x <- rep(100, 4)
+names(x) <- colnames(T)
+x
+```
+
+
+## 2a. Final demand and added value
+
+- Row sums = total sales of each sector as intermediate inputs.  
+- Final demand (by sector) = total output – row sum.  
+- Column sums = total intermediate input use of each sector.  
+- Added value (by sector) = total output – column sum.
+
+```{r}
+row_sums <- rowSums(T)
+col_sums <- colSums(T)
+
+final_demand <- x - row_sums
+value_added  <- x - col_sums
+
+results <- data.frame(
+  Sector       = names(x),
+  RowSum       = row_sums,
+  FinalDemand  = final_demand,
+  ColSum       = col_sums,
+  AddedValue   = value_added
+)
+```
+
+**Numerical results:**
+
+- Final demand:
+  - A1: 40  
+  - M1: 20  
+  - A2: 30  
+  - M2: 20  
+
+- Added value:
+  - A1: 25  
+  - M1: 35  
+  - A2: 25  
+  - M2: 25  
+
+**Aggregate per sector (A vs M) by summing across regions**
+
+```{r echo=FALSE}
+results$Group <- ifelse(substr(results$Sector, 1, 1) == "A", "A", "M")
+aggregate_results <- aggregate(
+  results[, c("RowSum", "FinalDemand", "ColSum", "AddedValue")],
+  by = list(SectorGroup = results$Group),
+  FUN = sum
+)
+
+aggregate_results
+```
+
+
+## 2b. Matrix of technical input coefficients
+
+The input coefficient \(a_{ij}\) is the intermediate input of sector \(i\) per unit of output of sector \(j\).
+
+Since each sector’s output is 100, dividing each column by 100 is equivalent to dividing the whole matrix by 100:
+
+```{r}
+A <- T / 100
+A
+```
+
+
+## 2c. Leontief inverse \((I - A)^{-1}\)
+
+I = 4×4 identity matrix
+
+```{r}
+# Identity matrix
+I <- diag(4)
+
+# I - A
+I_minus_A <- I - A
+I_minus_A
+
+# Leontief inverse
+L_inv <- solve(I_minus_A)
+L_inv
+```
+
+Entry $l_{ij}$ gives the total output of sector \(i\) required to deliver 1 extra unit of final demand for sector \(j\).
+
+
+## 2d. Added value multipliers for A1 and M1
+
+Value-added coefficients (per unit of own output):
+
+\[
+v_i = \frac{\text{value added of sector } i}{\text{output of sector } i}
+\]
+
+```{r}
+v <- value_added / x
+v
+```
+
+The value-added multiplier for sector \(j\):
+
+\[
+m_j = \sum_i v_i \ell_{ij}
+\]
+
+```{r}
+mult_A1 <- sum(v * L_inv[,1])
+mult_M1 <- sum(v * L_inv[,2])
+
+data.frame(
+  Sector                = c("A1", "M1"),
+  AddedValueMultiplier  = c(mult_A1, mult_M1)
+)
+```
+
+Extra 1 euro of final demand in A1 or M1 generates in total 1 euro of added value in the whole 4-sector system.
+
+
+## 2e. Demand shock and effects on intermediate sales and added value
+
+**Increase in final demand:**
+
+- A1: +5  
+- M1: +5  
+- A2: 0  
+- M2: 0  
+
+```{r}
+df <- c(5, 5, 0, 0)
+names(df) <- names(x)
+df
+```
+
+**Change in gross output**
+
+\[
+\Delta x = (I - A)^{-1} \Delta f
+\]
+
+```{r}
+dx <- L_inv %*% df
+# the outputs change approximately by:
+dx
+```
+
+
+**Change in intermediate sales**
+
+The additional intermediate sales of sector \(i\) equal:
+
+\[
+\Delta z_i = \sum_j a_{ij} \Delta x_j
+\]
+
+or:
+
+\[
+\Delta z = A \Delta x
+\]
+
+```{r}
+intermediate_effects <- A %*% dx
+
+#Increases in intermediate sales by sector
+intermediate_effects
+```
+
+For A2 and M2, all the extra output is used as intermediate input (they had no direct final demand shock).
+
+
+**Change in added value**
+
+Change in added value per sector:
+
+\[
+\Delta \text{VA}_i = v_i \Delta x_i
+\]
+
+```{r}
+added_value_change <- v * as.numeric(dx)
+added_value_change
+sum(added_value_change)
+```
+
+The total added value increase is ~10.

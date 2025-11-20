@@ -1,7 +1,15 @@
 ---
 title: "Spatial Concentration and Diversification in the Dutch Economy - Group 7"
-author: "(Group 7) A. Sychevska, "
-output: html_document
+author: 'Group 7: A. Sychevska,  Joshua Azadi Nik Ghaleh'
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    df_print: paged
+    number_sections: true
+  pdf_document:
+    toc: true
+    toc_depth: '3'
 ---
 
 ```{r setup, include=FALSE}
@@ -9,6 +17,11 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 library(tidyverse)
 library(readxl)
 library(ineq)
+
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(ggplot2)
 ```
 
 # Introduction
@@ -18,63 +31,93 @@ The purpose of this analysis is to examine the **spatial concentration of employ
 - **A — Agriculture, forestry and fishing**  
 - **Q — Health and social work activities**  
 
-These industries were assigned to **Group 7** in the *Regional and Urban Economics* tutorial (Week 3). The exercise applies regional economics indicators to measure **specialization, concentration, and diversification**, connecting theory to empirical data from **CBS StatLine (2024)**.
+The exercise applies regional economics indicators to measure **specialization, concentration, and diversification**, connecting theory to empirical data from **CBS StatLine (2024)**.
 
 The assignment corresponds to the following questions:
-- (a) Data preparation and assumptions
-- (b) Location quotients (LQ)
-- (c) Hirschman–Herfindahl Index (HHI) and Lorenz curves
-- (d) Interpretation and theoretical discussion
 
----
+- (a) Data preparation and assumptions
+
+- (b) Location quotients (LQ)
+
+- (c) Hirschman–Herfindahl Index (HHI) and Lorenz curves
+
+- (d) Interpretation and theoretical discussion
 
 # (a) Data Preparation and Assumptions
 
 ```{r data-prep}
-# Load dataset
-library(tidyverse)
+data_raw <- read_csv2("Banen_van_werknemers__SBI2008__regio.csv")
+# inspect structure
+glimpse(data_raw)
 
-# Read CSV (semicolon-delimited)
-data_raw <- read_csv2("Banen_van_werknemers__SBI2008__regio.csv", 
-                      col_types = cols(.default = "c"))
-# Inspect structure
-glimpse(data)
+# clean column names
+colnames(data_raw) <- c("industry", "region", "period", "employment")
 
-# Clean column names
-colnames(data_raw) <- c("industry", "period", "region", "employment")
-
-# Convert numeric column and trim spaces
+# convert numeric column and trim spaces
 data <- data_raw %>%
   mutate(
-    employment = as.numeric(str_replace(employment, ",", ".")),
-    region = str_trim(region),
-    industry = str_trim(industry)
+    region   = str_trim(region),
+    industry = str_trim(industry),
+    period   = str_trim(period),
+
+    # convert employment correctly
+    employment = case_when(
+      employment == "." ~ NA_character_,
+      TRUE ~ str_replace(employment, ",", ".") 
+    ),
+    employment = as.numeric(employment)
+  ) %>%
+  filter(
+    region == "Nederland" | str_detect(region, "\\(PV\\)$")
   )
 ```
 
-# Aggregation by Province and Industry
+```{r}
+data_clean <- data %>%
+  filter(
+    # keep provinces + national
+    region == "Nederland" | str_detect(region, "\\(PV\\)$")
+  ) %>%
+  filter(
+    # keep only industries A–S, NOT A-U
+    str_detect(industry, "^[A-S] ")
+  )
 
-```{r aggregate}
-# Keep only industries A and Q (for Group 7)
-data_group7 <- data %>%
-  filter(str_detect(industry, "^A ") | str_detect(industry, "^Q "))
+employment_summary <- data_clean%>%
+  mutate(ind_code = substr(industry, 1, 1))
 
-# Summarize by province and industry
-employment_summary <- data_group7 %>%
-  group_by(province = region, industry) %>%
-  summarise(total_jobs = sum(employment, na.rm = TRUE)) %>%
-  ungroup()
+employment_wide <- employment_summary %>%
+  filter(str_detect(region, "\\(PV\\)$")) %>%
+  select(region, ind_code, employment) %>%
+  pivot_wider(
+    names_from  = ind_code,
+    values_from = employment
+  ) %>%
+  arrange(region)
 
-print(employment_summary)
+employment_wide
 ```
 
-**Assumptions & Issues:**  
-- Some regional codes include non-provincial regions; only official 12 provinces are kept.  
-- Employment values are given in thousands; interpretation assumes uniform scaling.  
-- Some small industries or missing entries are ignored when summing totals.  
-- Totals help verify data consistency — provincial sums match national totals approximately.  
 
----
+**Assumptions & Issues:**  
+
+The raw CBS StatLine dataset includes employment by industry and region for 2024. During preparation, several issues and assumptions were addressed:
+
+- **Regional filtering:**  
+  The dataset contains national totals and non-provincial categories. Only the **12 official provinces** are retained, as required by the assignment, to avoid double counting.
+
+- **Numeric conversion and units:**  
+  Employment values are provided as character strings measured in **thousands of jobs**. These are converted to numeric, assuming the scaling is consistent across all sectors and regions.
+
+- **Industry selection:**  
+  Only **SBI 1-digit industries** are kept. Missing entries for these industries are treated as zeros when aggregating provincial totals.
+
+- **Use of totals for validation:**  
+  National totals (e.g. “Nederland”) are excluded from the analysis but used to **check internal consistency**. Provincial employment sums approximately match national totals, indicating that the cleaned dataset is suitable for concentration and specialization analysis.
+
+- **Final table construction:**  
+  After cleaning, employment is aggregated by province and reshaped into a **province × industry** matrix. This table forms the base for calculating LQ, HHI, Lorenz curves, and diversification indicators in the following sections.
+
 
 # (b) Location Quotients (LQ)
 
@@ -87,28 +130,118 @@ Values:
 - **LQ < 1:** province is less specialized.
 
 ```{r lq}
-# Compute totals
-prov_total <- employment_summary %>% group_by(province) %>% summarise(total_prov = sum(total_jobs))
-nat_total <- sum(prov_total$total_prov)
-
-# Merge and compute LQ
-lq_data <- employment_summary %>%
-  left_join(prov_total, by = "province") %>%
-  group_by(industry) %>%
-  mutate(total_industry = sum(total_jobs)) %>%
-  ungroup() %>%
-  mutate(
-    LQ = (total_jobs / total_prov) / (total_industry / nat_total)
+employment_long <- employment_wide %>%
+  pivot_longer(
+    cols = -region,
+    names_to = "industry",
+    values_to = "jobs"
   )
 
-lq_data %>% select(province, industry, LQ) %>% head(10)
+# total employment per province (Ei)
+prov_total <- employment_long %>%
+  group_by(region) %>%
+  summarise(Ei = sum(jobs, na.rm = TRUE), .groups = "drop")
+
+# total employment per industry (Ej)
+ind_total <- employment_long %>%
+  group_by(industry) %>%
+  summarise(Ej = sum(jobs, na.rm = TRUE), .groups = "drop")
+
+# national total employment (E)
+E_tot <- sum(employment_long$jobs, na.rm = TRUE)
+
+# compute Location Quotients (LQ)
+lq_data <- employment_long %>%
+  left_join(prov_total, by = "region") %>%
+  left_join(ind_total, by = "industry") %>%
+  mutate(
+    LQ = (jobs / Ei) / (Ej / E_tot)
+  )
+
+lq_data
+
+
+write_csv(lq_data, "lq_data.csv")
 ```
 
-**Interpretation:**  
-Agriculture (A) typically shows **LQ > 1** in rural provinces like **Friesland, Zeeland, and Drenthe**, reflecting land-based specialization.  
-Healthcare (Q) has **LQ > 1** in **Zuid-Holland, Noord-Holland, and Noord-Brabant**, consistent with large population centers.
+```{r}
+selected_industries <- c("A", "C", "G", "Q")
 
----
+lq_selected <- lq_data %>%
+  filter(industry %in% selected_industries) %>%
+  arrange(industry, region)
+
+lq_selected
+```
+
+```{r}
+lq_sel <- lq_data %>%
+  filter(industry %in% c("A", "C", "G", "Q")) %>%
+  select(region, industry, LQ) %>%
+  mutate(LQ = round(LQ, 2)) %>%
+  arrange(industry, desc(LQ))
+
+lq_table <- lq_sel %>%
+  tidyr::pivot_wider(
+    names_from = industry,
+    values_from = LQ
+  )
+
+kable(lq_table, caption = "Location Quotients by Province for Selected Industries (A, C, G, Q)",
+      digits = 2) %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+```{r lq-plot, warning=FALSE, message=FALSE}
+ggplot(
+  lq_selected,
+  aes(x = region, y = LQ, fill = industry)
+) +
+  geom_col(position = "dodge") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Location Quotients (LQ) by Province",
+    subtitle = "Industries: A (Agriculture), C (Manufacturing), G (Trade), Q (Health & Social Work)",
+    x = "Province",
+    y = "LQ Value",
+    fill = "Industry"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(face = "bold")
+  )
+```
+
+### Results
+
+**Agriculture (A)**
+- **High specialization:** Zeeland, Flevoland, Limburg  
+- **Low specialization:** Utrecht, Groningen, Overijssel  
+
+**Manufacturing (C)**
+- **High specialization (LQ > 1):** Noord-Brabant, Gelderland, Overijssel  
+- **Low specialization:** Flevoland, Utrecht  
+
+**Trade (G)**
+- LQs are **close to 1 in all provinces**, indicating a **highly dispersed and population-driven sector**.
+
+**Health & Social Work (Q)**
+- **Higher specialization:** Groningen, Fryslân, Utrecht  
+- **Lower specialization:** Limburg, Zeeland  
+
+### Interpretation
+
+The LQ results show strong **regional heterogeneity** in the Dutch economic structure:
+
+- **Agriculture (A)** remains highly concentrated in rural provinces such as **Zeeland, Flevoland, and Limburg**, reflecting land availability and traditional sector patterns.  
+- **Manufacturing (C)** clusters in provinces with established industrial bases — especially **Noord-Brabant and Gelderland** — consistent with the presence of supply chains and skilled labor pools.  
+- **Trade (G)** is almost evenly distributed across the country, as expected for a sector closely tied to **local consumption and population density**.  
+- **Health & Social Work (Q)** shows slightly higher concentration in provinces with major hospitals and university medical centers (**Groningen, Fryslân, Utrecht**).
+
+Overall, the results support the idea that Dutch provinces exhibit **distinct specialization profiles**, confirming substantial **regional economic diversification and concentration patterns**.
+
 
 # (c) Spatial Concentration — HHI and Lorenz Curves
 
@@ -117,115 +250,200 @@ The **Hirschman–Herfindahl Index (HHI)** measures concentration across provinc
 $$HHI_j = \sum_i s_{ij}^2$$
 
 where \( s_{ij} \) is the share of province *i* in total employment of industry *j*.
+```{r group7-data}
+# group 7 industries: A and Q
+
+ind_group7 <- c(
+  "A Landbouw, bosbouw en visserij",
+  "Q Gezondheids- en welzijnszorg"
+)
+
+# provinces (PV) and industries A, Q
+data_group7 <- employment_summary %>%
+  filter(str_detect(region, "\\(PV\\)$"),
+         industry %in% ind_group7)
+
+data_group7
+```
+### HHI
 
 ```{r hhi}
-hhi_results <- employment_summary %>%
+province_only <- employment_summary %>%
+  filter(str_detect(region, "\\(PV\\)$"))
+
+# compute HHI
+hhi_results <- province_only %>%
   group_by(industry) %>%
-  mutate(share = total_jobs / sum(total_jobs)) %>%
-  summarise(HHI = sum(share^2)) %>%
+  mutate(
+    share = employment / sum(employment)
+  ) %>%
+  summarise(
+    HHI = sum(share^2),
+    .groups = "drop"
+  ) %>%
   arrange(desc(HHI))
 
 hhi_results
 ```
-
-**Interpretation:**  
-- A higher **HHI** indicates stronger concentration.  
-- We expect **Agriculture (A)** to show a **higher HHI** (fewer provinces dominate agricultural jobs).  
-- **Healthcare (Q)** should have a **lower HHI**, indicating dispersion across most provinces.  
-
+  
 ### Lorenz Curves
 
 The Lorenz curve visualizes this distribution — the further it lies from the equality line, the more concentrated the industry.
 
-```{r lorenz}
-lorenz_data <- employment_summary %>%
-  group_by(industry) %>%
-  arrange(total_jobs) %>%
-  mutate(
-    cum_jobs = cumsum(total_jobs) / sum(total_jobs),
-    cum_provinces = cumsum(rep(1, n())) / n()
-  )
+Task: make a Lorenz curve for both industries where you compare the *regional shares of the industry* with the *shares of the provinces in the total national
 
-ggplot(lorenz_data, aes(x = cum_provinces, y = cum_jobs, color = industry)) +
-  geom_line(size = 1.2) +
-  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
-  labs(title = "Lorenz Curves for Industries A and Q",
-       x = "Cumulative share of provinces",
-       y = "Cumulative share of employment",
-       color = "Industry") +
-  theme_minimal()
+So:
+
+- x-axis: **cumulative share of provinces in total national employment (all industries)**  
+- y-axis: **cumulative share of the industry’s employment**  
+
+Needed:
+Employment per province and industry j (A or Q) -> \(E_{ij}\)
+
+```{r lorenz-prep}
+# total employment per province (all industries)
+prov_totals <- data_clean%>%
+  filter(str_detect(region, "\\(PV\\)$")) %>%
+  group_by(region) %>%
+  summarise(Ei = sum(employment, na.rm = TRUE), .groups = "drop")
+
+E_tot <- sum(prov_totals$Ei, na.rm = TRUE)
+
+prov_shares <- prov_totals %>%
+  mutate(prov_share = Ei / E_tot) %>%
+  select(region, prov_share)
+
+# join province shares to group 7 industries (A and Q)
+lorenz_data <- data_group7 %>%
+  left_join(prov_shares, by = "region") %>%
+  group_by(industry) %>%
+  arrange(prov_share, .by_group = TRUE) %>%
+  mutate(
+    # industry share per province
+    ind_total   = sum(employment, na.rm = TRUE),
+    share_ind   = employment / ind_total,
+    # Lorenz cumulative shares
+    cum_prov    = cumsum(prov_share),
+    cum_ind     = cumsum(share_ind)
+  ) %>%
+  ungroup()
+
+head(lorenz_data, 15)
 ```
 
-**Interpretation:**  
-The Lorenz curve for **Agriculture (A)** should bow more sharply, showing higher concentration, while **Healthcare (Q)** lies closer to the equality line, showing more uniform distribution.
+```{r lorenz-plot, fig.height=4.5, fig.width=7}
+ggplot(lorenz_data, aes(x = cum_prov, y = cum_ind, color = industry)) +
+  geom_line(size = 1.2) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(
+    title = "Lorenz Curves for Industries A and Q",
+    subtitle = "Cumulative provincial share of total employment vs. industry employment",
+    x = "Cumulative share of provinces in total employment",
+    y = "Cumulative share of industry employment",
+    color = "Industry"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 0),
+    plot.title = element_text(face = "bold")
+  )
+```
 
----
+#### Interpretation of Lorenz Curves and HHI
 
-# (d) Discussion and Theoretical Interpretation
+The Lorenz curve and HHI results show clear differences in the spatial distribution of employment across the two industries.
 
-## Discussion – Group 7: Spatial Concentration (Industries A & Q)
+The Hirschman–Herfindahl indices confirm that Agriculture (A) is more spatially concentrated than Health & Social Work (Q). Industry A has an HHI of 0.142, compared to 0.122 for Q, indicating a less even distribution across provinces. Although the numerical difference appears modest, it is economically meaningful: agricultural employment is strongly shaped by land availability and rural specialisation, whereas health-related employment follows population patterns and is therefore more evenly spread.
 
-This section examines spatial concentration across Dutch regions for two contrasting industries:  
-**A – Agriculture, Forestry and Fishing**, and **Q – Health and Social Work**.
+The Lorenz curves in this case differ from the standard income-style curves.
 
-### Concentration patterns
+For Agriculture (A), the curve shows pronounced jumps: several provinces contribute almost nothing to agricultural employment, followed by steep increases where a few provinces dominate. This pattern reflects a highly uneven, specialized spatial structure rather than a smooth deviation from equality.
 
-The computed **Hirschman–Herfindahl Index (HHI)** values were:
+For Health & Social Work (Q), the curve is smoother and closer to the diagonal, indicating that employment in this sector is more evenly distributed across provinces. The absence of large jumps suggests that all provinces host a substantial share of employment in this industry.
 
-| Industry | HHI |
-|-----------|------|
-| Q – Health and Social Work | **0.633** |
-| A – Agriculture, Forestry and Fishing | **0.618** |
+Overall, even though the curves cross the equality line, their shapes reveal that Agriculture is more spatially concentrated, while Health is more evenly spread geographically.
 
-Both industries display **moderate regional concentration**, but healthcare (Q) shows a *slightly higher HHI*.  
-This is somewhat counterintuitive, since we might expect agriculture to be more geographically concentrated in rural areas.  
-However, the results show that employment in **Q** is dominated by a few large regions—especially **Zuid-Nederland (LD)** and **Nederland, Buitenland, Niet in te delen**—which include major population centers and hospital clusters.  
-By contrast, agricultural employment is more evenly spread across smaller regions such as **Midden-Limburg (CR)** and **Gorinchem (AM)**, lowering its measured HHI slightly.
+# (d) Indicators the regional specialization of the Dutch economy
 
-### Lorenz curve interpretation
+The empirical analysis reveals clear and systematic differences in the spatial structure of Dutch employment.  
+Using Location Quotients (LQ), Hirschman–Herfindahl Indices (HHI), and Lorenz curves, several patterns emerge.
 
-The **Lorenz curves** reinforce this difference:
-- The **healthcare curve** lies slightly further from the equality line, indicating that employment is concentrated in a few populous regions.  
-- The **agriculture curve** lies closer to the equality line, reflecting more balanced spatial distribution across rural regions.
+**1. Regional Specialisation (LQ Results)**
 
-This pattern aligns with how **agglomeration** and **dispersion forces** differ between sectors:
-- **Healthcare (Q)** is driven by **agglomeration**—benefiting from large markets, infrastructure, and labor pools.  
-- **Agriculture (A)** depends on **dispersion**—land availability, rural labor, and resource-based activity.
+The LQ calculations indicate substantial variation in the extent to which provinces specialise in different economic activities:
 
-### Regional insights
+- **Agriculture (A)** shows strong specialisation in rural provinces such as **Flevoland, Zeeland, and Limburg**, all of which have LQ values well above 1.  
+- Provinces such as **Utrecht, Groningen, and Noord-Holland** have LQs far below 1, confirming that agriculture forms only a small share of their economic base.
 
-Employment data confirm these tendencies:
-- **Zuid-Nederland (LD)** contributes strongly to both A and Q due to its mixed urban–rural economy.  
-- **Groningen (PV)** and **Midden-Limburg (CR)** display modest yet focused agricultural specialization.  
-- **Zwolle** contributes smaller, diversified employment shares typical of mid-sized urban regions.
+In contrast:
 
-### Theoretical connection
+- **Health & Social Work (Q)** has LQ values closer to 1 across nearly all provinces.  
+- Slightly higher specialisation occurs in **Groningen, Fryslân, and Utrecht**, while **Limburg and Zeeland** lie below the national average.
 
-According to **McCann (2013)** and the **core–periphery model**, these results illustrate how national economies balance specialization and diversity:
-- **Urban cores** (like Zuid-Nederland) concentrate **knowledge-intensive services** such as healthcare.  
-- **Peripheral regions** (like Groningen and Limburg) rely more on **land-based industries**.  
-The modest differences in HHI between A and Q show how structural and spatial forces jointly shape regional specialization.
+These results highlight that industry composition differs strongly across space: agriculture is highly geographically specialised, whereas health and social services are dispersed and tied to population density.
 
-### Limitations
+**2. Spatial Concentration (HHI Results)**
 
-- The dataset mixes spatial levels (PV, CR, LD, AM), so comparability across regions is imperfect.  
-- Data represent *December 2024*, which may bias seasonal sectors such as agriculture.  
-- “Nederland, Buitenland, Niet in te delen” inflates total national employment and slightly raises concentration values.
+The Hirschman–Herfindahl Index provides a complementary quantitative measure:
 
-### Summary
+- **Agriculture (A)** has a higher HHI (~0.142), indicating **greater spatial concentration**.
+- **Health & Social Work (Q)** has a lower HHI (~0.122), consistent with a **more even spatial distribution**.
 
-Overall, both **A** and **Q** exhibit notable regional concentration, though for different structural reasons:
-- **Healthcare (Q)** clusters in high-density regions due to service demand and infrastructure.  
-- **Agriculture (A)** remains spatially dispersed but regionally specialized.  
+Although the numerical difference seems modest, it is economically meaningful: agricultural employment is concentrated in only a few provinces, whereas health employment is present everywhere.
 
-These findings reflect a **dual spatial structure** within the Dutch economy—urban concentration for services, and peripheral specialization for land-based production.
 
----
+**3. Lorenz Curves**
 
-# Appendix
+The Lorenz curves further illustrate these differences:
 
-- **Data Source:** CBS StatLine — “Banen van werknemers in december; economische activiteit (SBI2008), regio (2024)”  
-- **Spatial Level:** Provinces (PV)  
-- **Sectors:** A (Agriculture, forestry, and fishing), Q (Health and social work activities)  
-- **Indicators Used:** LQ, HHI, Lorenz Curves  
-- **Software:** R with tidyverse and ineq packages  
+- The curve for **Agriculture** displays **large jumps**: several provinces contribute almost nothing to agricultural employment, followed by steep increases from a few dominant provinces.  
+  This is characteristic of a **highly uneven and specialised spatial pattern**.
+
+- The curve for **Health & Social Work** lies much closer to the diagonal, indicating a **smoother and more evenly distributed** pattern across provinces.
+
+Together, the LQ, HHI, and Lorenz curve results paint a consistent picture:
+
+- **Agriculture is spatially concentrated**, dependent on land availability and rural characteristics.
+- **Health & Social Work is spatially diversified**, reflecting widespread demand and demographic determinants.
+- Provincial economies in the Netherlands display **substantial structural heterogeneity**, with different regions specializing in different types of economic activity.
+- Indicators reinforce each other: high LQ provinces for Agriculture are the same provinces driving its high HHI and steep Lorenz curve.
+
+# Appendix A: Data Sources and Preparation
+
+**Data source**
+
+The employment dataset is obtained from **CBS StatLine**:
+
+- **Table:** *Banen van werknemers in december; economische activiteit (SBI2008), regio*  
+- **Year selected:** 2024  
+- **Sector level:** *Bedrijfstakken 1e digit* (A–S)  
+- **Regional unit:** Provinces (*Provincies*) + national totals  
+- **Period:** `"2024 december*"`
+
+**Import and cleaning**
+
+The original file was downloaded as a CSV and imported into R.
+
+Data preparation steps:
+
+- Renamed variables to: `industry`, `region`, `period`, `employment`.
+- Converted `employment` from character to numeric, replacing comma decimals with dots.
+- Interpreted employment values as **jobs (x 1,000)**, as defined by CBS.
+- Filtered the dataset to retain only observations for `"2024 december*"`.
+
+**Selection for Group 7**
+
+The assignment for Group 7 focuses on:
+
+- **A — Agriculture, forestry and fishing**  
+- **Q — Health and social work activities**
+
+Steps applied:
+
+- Filtered rows where `industry` begins with `"A "` or `"Q "` using `str_detect()`.
+- Constructed a **province × industry** table using `pivot_wider()`.
+
+**Treatment of totals**
+- National totals and “not allocated” categories (e.g. `"Nederland"`) are **kept temporarily** to check data consistency.
+- These totals were used only to verify that the sum of provincial employment approximates the national number.
+- They are **excluded** from all concentration, LQ, Lorenz, and HHI calculations.
